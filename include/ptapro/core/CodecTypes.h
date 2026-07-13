@@ -1,9 +1,11 @@
 #pragma once
 
 #include <QImage>
+#include <QPointF>
 #include <QSize>
 #include <QString>
 #include <QStringList>
+#include <QVector>
 
 namespace ptapro {
 
@@ -37,10 +39,17 @@ struct EncodeResult {
     QString message;
 };
 
+struct DecodedSymbol {
+    QString payload;
+    QString formatName;
+    QVector<QPointF> corners;
+};
+
 struct DecodeResult {
     bool success{false};
     QString payload;
     QString formatName;
+    QVector<DecodedSymbol> symbols;
     QString message;
 };
 

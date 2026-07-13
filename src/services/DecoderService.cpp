@@ -17,6 +17,32 @@ QString fromUtf8StdString(const std::string& text)
     return QString::fromUtf8(text.data(), static_cast<int>(text.size()));
 }
 
+DecodedSymbol toDecodedSymbol(const ZXing::Result& result)
+{
+    const auto position = result.position();
+    return {
+        fromUtf8StdString(result.text()),
+        fromUtf8StdString(ZXing::ToString(result.format())),
+        {
+            QPointF(position.topLeft().x, position.topLeft().y),
+            QPointF(position.topRight().x, position.topRight().y),
+            QPointF(position.bottomRight().x, position.bottomRight().y),
+            QPointF(position.bottomLeft().x, position.bottomLeft().y),
+        },
+    };
+}
+
+ZXing::ReaderOptions defaultReaderOptions()
+{
+    ZXing::ReaderOptions options;
+    options.setFormats(ZXing::BarcodeFormat::QRCode | ZXing::BarcodeFormat::Code128 | ZXing::BarcodeFormat::EAN13);
+    options.setTryHarder(true);
+    options.setTryRotate(true);
+    options.setTryInvert(true);
+    options.setMaxNumberOfSymbols(32);
+    return options;
+}
+
 } // namespace
 
 DecodeResult DecoderService::decodeImage(const QImage& image) const
@@ -24,6 +50,7 @@ DecodeResult DecoderService::decodeImage(const QImage& image) const
     if (image.isNull()) {
         return {
             false,
+            {},
             {},
             {},
             QStringLiteral("请先选择一张有效图片。"),
@@ -40,27 +67,34 @@ DecodeResult DecoderService::decodeImage(const QImage& image) const
         rgbImage.bytesPerLine()
     );
 
-    ZXing::ReaderOptions options;
-    options.setFormats(ZXing::BarcodeFormat::QRCode | ZXing::BarcodeFormat::Code128 | ZXing::BarcodeFormat::EAN13);
-    options.setTryHarder(true);
-    options.setTryRotate(true);
-    options.setTryInvert(true);
+    QVector<DecodedSymbol> symbols;
+    const ZXing::Results results = ZXing::ReadBarcodes(imageView, defaultReaderOptions());
+    symbols.reserve(static_cast<int>(results.size()));
 
-    const ZXing::Result result = ZXing::ReadBarcode(imageView, options);
-    if (!result.isValid()) {
+    for (const ZXing::Result& result : results) {
+        if (!result.isValid()) {
+            continue;
+        }
+        symbols.append(toDecodedSymbol(result));
+    }
+
+    if (symbols.isEmpty()) {
         return {
             false,
+            {},
             {},
             {},
             QStringLiteral("未识别到二维码或条形码。"),
         };
     }
 
+    const DecodedSymbol& firstSymbol = symbols.first();
     return {
         true,
-        fromUtf8StdString(result.text()),
-        fromUtf8StdString(ZXing::ToString(result.format())),
-        QStringLiteral("识别成功。"),
+        firstSymbol.payload,
+        firstSymbol.formatName,
+        symbols,
+        QStringLiteral("识别到 %1 个码。").arg(symbols.size()),
     };
 }
 

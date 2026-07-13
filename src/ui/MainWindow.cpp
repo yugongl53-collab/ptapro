@@ -2,8 +2,12 @@
 
 #include "ptapro/core/CodecTypes.h"
 
+#include <QApplication>
 #include <QCheckBox>
+#include <QClipboard>
+#include <QColor>
 #include <QComboBox>
+#include <QDesktopServices>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -15,16 +19,30 @@
 #include <QIODevice>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
+#include <QPainter>
 #include <QPixmap>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QTimer>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QtGlobal>
 
+#if defined(PTAPRO_HAS_QT_MULTIMEDIA)
+#include <QCamera>
+#include <QCameraDevice>
+#include <QMediaCaptureSession>
+#include <QMediaDevices>
+#include <QVideoFrame>
+#include <QVideoSink>
+#endif
+
 namespace ptapro {
 namespace {
+
+constexpr int kCameraDecodeIntervalMs = 250;
 
 QString appendSuffixIfMissing(const QString& filePath, const QString& selectedFilter)
 {
@@ -65,12 +83,56 @@ bool isSvgPath(const QString& filePath)
     return QFileInfo(filePath).suffix().compare(QStringLiteral("svg"), Qt::CaseInsensitive) == 0;
 }
 
+QString resultItemText(int index, const DecodedSymbol& symbol)
+{
+    return QStringLiteral("%1. [%2] %3")
+        .arg(index + 1)
+        .arg(symbol.formatName)
+        .arg(symbol.payload);
+}
+
+bool isOpenableUrl(const QString& payload)
+{
+    const QUrl url = QUrl::fromUserInput(payload.trimmed());
+    return url.isValid() && (url.scheme() == QStringLiteral("http") || url.scheme() == QStringLiteral("https"));
+}
+
+QRectF symbolBoundingRect(const DecodedSymbol& symbol)
+{
+    if (symbol.corners.isEmpty()) {
+        return {};
+    }
+
+    qreal minX = symbol.corners.first().x();
+    qreal maxX = minX;
+    qreal minY = symbol.corners.first().y();
+    qreal maxY = minY;
+    for (const QPointF& point : symbol.corners) {
+        minX = qMin(minX, point.x());
+        maxX = qMax(maxX, point.x());
+        minY = qMin(minY, point.y());
+        maxY = qMax(maxY, point.y());
+    }
+
+    QRectF rect(QPointF(minX, minY), QPointF(maxX, maxY));
+    if (rect.width() < 8 || rect.height() < 8) {
+        // 一维码有时只返回近似扫描线，扩展成可见区域便于用户定位。
+        rect.adjust(-10, -10, 10, 10);
+    }
+    return rect;
+}
+
 } // namespace
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
 {
     setupUi();
+}
+
+MainWindow::~MainWindow()
+{
+    stopCameraRecognition();
 }
 
 void MainWindow::setupUi()
@@ -144,22 +206,42 @@ void MainWindow::setupUi()
     inputLayout->addLayout(actionLayout);
     inputLayout->addStretch();
 
-    auto* previewGroup = new QGroupBox(QStringLiteral("预览与识别"), centralWidget);
+    auto* previewGroup = new QGroupBox(QStringLiteral("识别器"), centralWidget);
     auto* previewLayout = new QVBoxLayout(previewGroup);
 
-    previewLabel_ = new QLabel(QStringLiteral("输入内容后自动生成预览"), previewGroup);
+    previewLabel_ = new QLabel(QStringLiteral("输入内容生成预览，或打开图片进行识别"), previewGroup);
     previewLabel_->setAlignment(Qt::AlignCenter);
     previewLabel_->setMinimumSize(360, 360);
     previewLabel_->setFrameShape(QFrame::StyledPanel);
     previewLabel_->setScaledContents(false);
 
     decodeButton_ = new QPushButton(QStringLiteral("打开图片识别"), previewGroup);
+    cameraButton_ = new QPushButton(QStringLiteral("启动摄像头识别"), previewGroup);
+
+    auto* decodeActionLayout = new QHBoxLayout();
+    decodeActionLayout->addWidget(decodeButton_);
+    decodeActionLayout->addWidget(cameraButton_);
+
+    resultList_ = new QListWidget(previewGroup);
+    resultList_->setMinimumHeight(110);
+    resultList_->setWordWrap(true);
+
+    copyButton_ = new QPushButton(QStringLiteral("复制结果"), previewGroup);
+    openUrlButton_ = new QPushButton(QStringLiteral("用浏览器打开"), previewGroup);
+    copyButton_->setEnabled(false);
+    openUrlButton_->setEnabled(false);
+
+    auto* resultActionLayout = new QHBoxLayout();
+    resultActionLayout->addWidget(copyButton_);
+    resultActionLayout->addWidget(openUrlButton_);
 
     resultLabel_ = new QLabel(QStringLiteral("等待输入"), previewGroup);
     resultLabel_->setWordWrap(true);
 
     previewLayout->addWidget(previewLabel_, 1);
-    previewLayout->addWidget(decodeButton_);
+    previewLayout->addLayout(decodeActionLayout);
+    previewLayout->addWidget(resultList_);
+    previewLayout->addLayout(resultActionLayout);
     previewLayout->addWidget(resultLabel_);
 
     rootLayout->addWidget(inputGroup, 0, 0);
@@ -186,6 +268,10 @@ void MainWindow::setupUi()
     connect(chooseLogoButton_, &QPushButton::clicked, this, &MainWindow::chooseLogoImage);
     connect(clearLogoButton_, &QPushButton::clicked, this, &MainWindow::clearLogoImage);
     connect(decodeButton_, &QPushButton::clicked, this, &MainWindow::openImageAndDecode);
+    connect(cameraButton_, &QPushButton::clicked, this, &MainWindow::toggleCameraRecognition);
+    connect(copyButton_, &QPushButton::clicked, this, &MainWindow::copySelectedDecodedPayload);
+    connect(openUrlButton_, &QPushButton::clicked, this, &MainWindow::openSelectedDecodedUrl);
+    connect(resultList_, &QListWidget::currentRowChanged, this, &MainWindow::updateDecodedActionState);
 
     updateGeneratorOptionState();
     setCentralWidget(centralWidget);
@@ -196,11 +282,14 @@ void MainWindow::generateCode()
     if (previewTimer_->isActive()) {
         previewTimer_->stop();
     }
+    stopCameraRecognition();
     refreshGeneratedPreview();
 }
 
 void MainWindow::openImageAndDecode()
 {
+    stopCameraRecognition();
+
     const QString filePath = QFileDialog::getOpenFileName(
         this,
         QStringLiteral("选择图片"),
@@ -218,15 +307,47 @@ void MainWindow::openImageAndDecode()
         return;
     }
 
-    currentImage_ = image;
-    updatePreview(currentImage_);
+    decodeAndDisplayImage(image);
+}
 
-    const DecodeResult result = decoderService_.decodeImage(currentImage_);
-    if (result.success) {
-        showMessage(QStringLiteral("识别成功：%1").arg(result.payload), true);
-    } else {
-        showMessage(result.message, false);
+void MainWindow::toggleCameraRecognition()
+{
+#if defined(PTAPRO_HAS_QT_MULTIMEDIA)
+    if (cameraActive_) {
+        stopCameraRecognition();
+        showMessage(QStringLiteral("已停止摄像头识别。"), true);
+        return;
     }
+
+    const QList<QCameraDevice> cameras = QMediaDevices::videoInputs();
+    if (cameras.isEmpty()) {
+        showMessage(QStringLiteral("未检测到可用摄像头。"), false);
+        return;
+    }
+
+    clearDecodedResults(QStringLiteral("摄像头识别中"));
+    cameraSymbols_.clear();
+    cameraSession_ = new QMediaCaptureSession(this);
+    cameraSink_ = new QVideoSink(this);
+    camera_ = new QCamera(cameras.first(), this);
+
+    // 摄像头帧进入 QVideoSink 后，在 UI 线程节流调用 ZXing，避免每帧都做高成本解码。
+    cameraSession_->setCamera(camera_);
+    cameraSession_->setVideoSink(cameraSink_);
+    connect(cameraSink_, &QVideoSink::videoFrameChanged, this, &MainWindow::processCameraFrame);
+    connect(camera_, &QCamera::errorOccurred, this, [this](QCamera::Error, const QString& errorString) {
+        stopCameraRecognition();
+        showMessage(errorString.isEmpty() ? QStringLiteral("摄像头启动失败。") : errorString, false);
+    });
+
+    cameraActive_ = true;
+    cameraDecodeClock_.restart();
+    cameraButton_->setText(QStringLiteral("停止摄像头识别"));
+    showMessage(QStringLiteral("摄像头已启动：%1").arg(cameras.first().description()), true);
+    camera_->start();
+#else
+    showMessage(QStringLiteral("当前构建未启用 QtMultimedia，无法使用摄像头识别。"), false);
+#endif
 }
 
 void MainWindow::chooseLogoImage()
@@ -310,6 +431,27 @@ void MainWindow::saveGeneratedImage()
     showMessage(QStringLiteral("已保存：%1").arg(outputPath), true);
 }
 
+void MainWindow::copySelectedDecodedPayload()
+{
+    const DecodedSymbol* symbol = selectedDecodedSymbol();
+    if (!symbol) {
+        return;
+    }
+
+    QApplication::clipboard()->setText(symbol->payload);
+    showMessage(QStringLiteral("已复制识别结果。"), true);
+}
+
+void MainWindow::openSelectedDecodedUrl()
+{
+    const DecodedSymbol* symbol = selectedDecodedSymbol();
+    if (!symbol || !isOpenableUrl(symbol->payload)) {
+        return;
+    }
+
+    QDesktopServices::openUrl(QUrl::fromUserInput(symbol->payload.trimmed()));
+}
+
 void MainWindow::schedulePreviewUpdate()
 {
     // 文本输入会连续触发信号，做轻量防抖可以避免每个按键都立即调用 ZXing 生成矩阵。
@@ -341,6 +483,7 @@ void MainWindow::refreshGeneratedPreview()
     generatedImage_ = result.image;
     currentImage_ = result.image;
     saveButton_->setEnabled(true);
+    clearDecodedResults({});
     updatePreview(currentImage_);
     showMessage(result.message, true);
 }
@@ -361,6 +504,43 @@ void MainWindow::updateGeneratorOptionState()
         logoStatusLabel_->setText(QStringLiteral("已选择 Logo"));
     }
 }
+
+void MainWindow::updateDecodedActionState()
+{
+    const DecodedSymbol* symbol = selectedDecodedSymbol();
+    copyButton_->setEnabled(symbol != nullptr && !symbol->payload.isEmpty());
+    openUrlButton_->setEnabled(symbol != nullptr && isOpenableUrl(symbol->payload));
+}
+
+#if defined(PTAPRO_HAS_QT_MULTIMEDIA)
+void MainWindow::processCameraFrame(const QVideoFrame& frame)
+{
+    if (!cameraActive_ || !frame.isValid()) {
+        return;
+    }
+
+    const QImage frameImage = frame.toImage();
+    if (frameImage.isNull()) {
+        return;
+    }
+
+    currentImage_ = frameImage;
+    if (cameraDecodeClock_.elapsed() >= kCameraDecodeIntervalMs) {
+        cameraDecodeClock_.restart();
+        const DecodeResult result = decoderService_.decodeImage(frameImage);
+        cameraSymbols_ = result.symbols;
+
+        if (result.success) {
+            updateDecodedResults(result);
+            showMessage(result.message, true);
+        } else {
+            clearDecodedResults(QStringLiteral("摄像头识别中，未检测到码。"));
+        }
+    }
+
+    updatePreview(renderDecodeOverlay(frameImage, cameraSymbols_));
+}
+#endif
 
 EncodeRequest MainWindow::buildEncodeRequest() const
 {
@@ -384,7 +564,7 @@ EncodeRequest MainWindow::buildEncodeRequest() const
 void MainWindow::updatePreview(const QImage& image)
 {
     if (image.isNull()) {
-        previewLabel_->setText(QStringLiteral("输入内容后自动生成预览"));
+        previewLabel_->setText(QStringLiteral("输入内容生成预览，或打开图片进行识别"));
         previewLabel_->setPixmap({});
         return;
     }
@@ -397,6 +577,138 @@ void MainWindow::updatePreview(const QImage& image)
     );
     previewLabel_->setText({});
     previewLabel_->setPixmap(pixmap);
+}
+
+void MainWindow::decodeAndDisplayImage(const QImage& image)
+{
+    currentImage_ = image;
+    const DecodeResult result = decoderService_.decodeImage(currentImage_);
+    updateDecodedResults(result);
+
+    if (result.success) {
+        updatePreview(renderDecodeOverlay(currentImage_, result.symbols));
+        showMessage(result.message, true);
+    } else {
+        updatePreview(currentImage_);
+        showMessage(result.message, false);
+    }
+}
+
+void MainWindow::updateDecodedResults(const DecodeResult& result)
+{
+    decodedSymbols_ = result.symbols;
+    resultList_->clear();
+
+    for (int index = 0; index < decodedSymbols_.size(); ++index) {
+        auto* item = new QListWidgetItem(resultItemText(index, decodedSymbols_.at(index)), resultList_);
+        item->setData(Qt::UserRole, index);
+    }
+
+    if (!decodedSymbols_.isEmpty()) {
+        resultList_->setCurrentRow(0);
+    }
+    updateDecodedActionState();
+}
+
+void MainWindow::clearDecodedResults(const QString& message)
+{
+    decodedSymbols_.clear();
+    resultList_->clear();
+    updateDecodedActionState();
+
+    if (!message.isEmpty()) {
+        resultLabel_->setStyleSheet({});
+        resultLabel_->setText(message);
+    }
+}
+
+QImage MainWindow::renderDecodeOverlay(const QImage& image, const QVector<DecodedSymbol>& symbols) const
+{
+    if (image.isNull() || symbols.isEmpty()) {
+        return image;
+    }
+
+    QImage overlay = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    QPainter painter(&overlay);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    const qreal penWidth = qMax<qreal>(3.0, qMin(overlay.width(), overlay.height()) / 160.0);
+    QPen borderPen(QColor(250, 204, 21), penWidth);
+    borderPen.setJoinStyle(Qt::RoundJoin);
+    painter.setPen(borderPen);
+    painter.setBrush(Qt::NoBrush);
+
+    for (int index = 0; index < symbols.size(); ++index) {
+        const DecodedSymbol& symbol = symbols.at(index);
+        const QRectF rect = symbolBoundingRect(symbol);
+        if (rect.isNull()) {
+            continue;
+        }
+
+        if (symbol.corners.size() == 4 && rect.width() >= 8 && rect.height() >= 8) {
+            painter.drawPolygon(QPolygonF(symbol.corners));
+        } else {
+            painter.drawRect(rect);
+        }
+
+        const QString label = QStringLiteral("%1 %2").arg(index + 1).arg(symbol.formatName);
+        const QRectF labelRect(rect.topLeft() + QPointF(0, -28), QSizeF(92, 24));
+        painter.fillRect(labelRect, QColor(22, 101, 52, 220));
+        painter.setPen(Qt::white);
+        painter.drawText(labelRect.adjusted(6, 0, -6, 0), Qt::AlignVCenter | Qt::AlignLeft, label);
+        painter.setPen(borderPen);
+    }
+
+    return overlay;
+}
+
+const DecodedSymbol* MainWindow::selectedDecodedSymbol() const
+{
+    const QListWidgetItem* item = resultList_->currentItem();
+    if (!item) {
+        return nullptr;
+    }
+
+    const int index = item->data(Qt::UserRole).toInt();
+    if (index < 0 || index >= decodedSymbols_.size()) {
+        return nullptr;
+    }
+    return &decodedSymbols_.at(index);
+}
+
+void MainWindow::stopCameraRecognition()
+{
+    if (!cameraActive_) {
+        return;
+    }
+
+    cameraActive_ = false;
+    cameraSymbols_.clear();
+    if (cameraButton_) {
+        cameraButton_->setText(QStringLiteral("启动摄像头识别"));
+    }
+
+#if defined(PTAPRO_HAS_QT_MULTIMEDIA)
+    if (camera_) {
+        camera_->stop();
+    }
+    if (cameraSession_) {
+        cameraSession_->setCamera(nullptr);
+        cameraSession_->setVideoSink(nullptr);
+    }
+    if (camera_) {
+        camera_->deleteLater();
+        camera_ = nullptr;
+    }
+    if (cameraSink_) {
+        cameraSink_->deleteLater();
+        cameraSink_ = nullptr;
+    }
+    if (cameraSession_) {
+        cameraSession_->deleteLater();
+        cameraSession_ = nullptr;
+    }
+#endif
 }
 
 void MainWindow::showMessage(const QString& message, bool success)
