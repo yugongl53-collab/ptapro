@@ -15,7 +15,6 @@ class QLineEdit;
 class QListWidget;
 class QPushButton;
 class QSpinBox;
-class QTimer;
 
 #if defined(PTAPRO_HAS_QT_MULTIMEDIA)
 class QCamera;
@@ -42,7 +41,7 @@ private slots:
     void saveGeneratedImage();
     void copySelectedDecodedPayload();
     void openSelectedDecodedUrl();
-    void schedulePreviewUpdate();
+    void markGeneratedPreviewStale();
     void refreshGeneratedPreview();
     void updateGeneratorOptionState();
     void updateDecodedActionState();
@@ -72,6 +71,7 @@ private:
     QVector<DecodedSymbol> cameraSymbols_;
     QElapsedTimer cameraDecodeClock_;
     bool cameraActive_{false};
+    bool generatedPreviewVisible_{false};
 
     QLineEdit* payloadEdit_{nullptr};
     QComboBox* symbologyCombo_{nullptr};
@@ -91,7 +91,6 @@ private:
     QPushButton* saveButton_{nullptr};
     QPushButton* copyButton_{nullptr};
     QPushButton* openUrlButton_{nullptr};
-    QTimer* previewTimer_{nullptr};
 
 #if defined(PTAPRO_HAS_QT_MULTIMEDIA)
     QCamera* camera_{nullptr};

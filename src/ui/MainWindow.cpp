@@ -24,7 +24,6 @@
 #include <QPixmap>
 #include <QPushButton>
 #include <QSpinBox>
-#include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -249,20 +248,15 @@ void MainWindow::setupUi()
     rootLayout->setColumnStretch(0, 1);
     rootLayout->setColumnStretch(1, 2);
 
-    previewTimer_ = new QTimer(this);
-    previewTimer_->setSingleShot(true);
-    previewTimer_->setInterval(180);
-
-    connect(previewTimer_, &QTimer::timeout, this, &MainWindow::refreshGeneratedPreview);
-    connect(payloadEdit_, &QLineEdit::textChanged, this, &MainWindow::schedulePreviewUpdate);
+    connect(payloadEdit_, &QLineEdit::textChanged, this, &MainWindow::markGeneratedPreviewStale);
     connect(symbologyCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
         updateGeneratorOptionState();
-        schedulePreviewUpdate();
+        markGeneratedPreviewStale();
     });
-    connect(errorCorrectionCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this, &MainWindow::schedulePreviewUpdate);
-    connect(marginSpin_, qOverload<int>(&QSpinBox::valueChanged), this, &MainWindow::schedulePreviewUpdate);
-    connect(sizeSpin_, qOverload<int>(&QSpinBox::valueChanged), this, &MainWindow::schedulePreviewUpdate);
-    connect(readableTextCheck_, &QCheckBox::toggled, this, &MainWindow::schedulePreviewUpdate);
+    connect(errorCorrectionCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this, &MainWindow::markGeneratedPreviewStale);
+    connect(marginSpin_, qOverload<int>(&QSpinBox::valueChanged), this, &MainWindow::markGeneratedPreviewStale);
+    connect(sizeSpin_, qOverload<int>(&QSpinBox::valueChanged), this, &MainWindow::markGeneratedPreviewStale);
+    connect(readableTextCheck_, &QCheckBox::toggled, this, &MainWindow::markGeneratedPreviewStale);
     connect(generateButton_, &QPushButton::clicked, this, &MainWindow::generateCode);
     connect(saveButton_, &QPushButton::clicked, this, &MainWindow::saveGeneratedImage);
     connect(chooseLogoButton_, &QPushButton::clicked, this, &MainWindow::chooseLogoImage);
@@ -279,9 +273,6 @@ void MainWindow::setupUi()
 
 void MainWindow::generateCode()
 {
-    if (previewTimer_->isActive()) {
-        previewTimer_->stop();
-    }
     stopCameraRecognition();
     refreshGeneratedPreview();
 }
@@ -372,7 +363,7 @@ void MainWindow::chooseLogoImage()
     logoImage_ = image;
     logoStatusLabel_->setText(QFileInfo(filePath).fileName());
     updateGeneratorOptionState();
-    schedulePreviewUpdate();
+    markGeneratedPreviewStale();
 }
 
 void MainWindow::clearLogoImage()
@@ -380,7 +371,7 @@ void MainWindow::clearLogoImage()
     logoImage_ = {};
     logoStatusLabel_->setText(QStringLiteral("未选择"));
     updateGeneratorOptionState();
-    schedulePreviewUpdate();
+    markGeneratedPreviewStale();
 }
 
 void MainWindow::saveGeneratedImage()
@@ -452,10 +443,21 @@ void MainWindow::openSelectedDecodedUrl()
     QDesktopServices::openUrl(QUrl::fromUserInput(symbol->payload.trimmed()));
 }
 
-void MainWindow::schedulePreviewUpdate()
+void MainWindow::markGeneratedPreviewStale()
 {
-    // 文本输入会连续触发信号，做轻量防抖可以避免每个按键都立即调用 ZXing 生成矩阵。
-    previewTimer_->start();
+    if (generatedImage_.isNull()) {
+        return;
+    }
+
+    // 生成参数变化后不再自动重绘，避免用户输入半截 URL 时提前显示可保存结果。
+    generatedImage_ = {};
+    saveButton_->setEnabled(false);
+    if (generatedPreviewVisible_) {
+        currentImage_ = {};
+        generatedPreviewVisible_ = false;
+        updatePreview(currentImage_);
+    }
+    showMessage(QStringLiteral("参数已变化，请点击“立即生成”重新生成。"), false);
 }
 
 void MainWindow::refreshGeneratedPreview()
@@ -464,6 +466,7 @@ void MainWindow::refreshGeneratedPreview()
     if (request.payload.trimmed().isEmpty()) {
         generatedImage_ = {};
         currentImage_ = {};
+        generatedPreviewVisible_ = false;
         saveButton_->setEnabled(false);
         updatePreview(currentImage_);
         resultLabel_->setStyleSheet({});
@@ -474,7 +477,10 @@ void MainWindow::refreshGeneratedPreview()
     const EncodeResult result = encoderService_.encode(request);
     if (!result.success) {
         generatedImage_ = {};
+        currentImage_ = {};
+        generatedPreviewVisible_ = false;
         saveButton_->setEnabled(false);
+        updatePreview(currentImage_);
         showMessage(result.message, false);
         return;
     }
@@ -482,6 +488,7 @@ void MainWindow::refreshGeneratedPreview()
     generatedRequest_ = request;
     generatedImage_ = result.image;
     currentImage_ = result.image;
+    generatedPreviewVisible_ = true;
     saveButton_->setEnabled(true);
     clearDecodedResults({});
     updatePreview(currentImage_);
@@ -525,6 +532,7 @@ void MainWindow::processCameraFrame(const QVideoFrame& frame)
     }
 
     currentImage_ = frameImage;
+    generatedPreviewVisible_ = false;
     if (cameraDecodeClock_.elapsed() >= kCameraDecodeIntervalMs) {
         cameraDecodeClock_.restart();
         const DecodeResult result = decoderService_.decodeImage(frameImage);
@@ -582,6 +590,7 @@ void MainWindow::updatePreview(const QImage& image)
 void MainWindow::decodeAndDisplayImage(const QImage& image)
 {
     currentImage_ = image;
+    generatedPreviewVisible_ = false;
     const DecodeResult result = decoderService_.decodeImage(currentImage_);
     updateDecodedResults(result);
 
@@ -684,6 +693,10 @@ void MainWindow::stopCameraRecognition()
 
     cameraActive_ = false;
     cameraSymbols_.clear();
+    currentImage_ = {};
+    generatedPreviewVisible_ = false;
+    clearDecodedResults({});
+    updatePreview(currentImage_);
     if (cameraButton_) {
         cameraButton_->setText(QStringLiteral("启动摄像头识别"));
     }
