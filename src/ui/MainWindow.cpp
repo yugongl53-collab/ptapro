@@ -535,7 +535,8 @@ void MainWindow::processCameraFrame(const QVideoFrame& frame)
     generatedPreviewVisible_ = false;
     if (cameraDecodeClock_.elapsed() >= kCameraDecodeIntervalMs) {
         cameraDecodeClock_.restart();
-        const DecodeResult result = decoderService_.decodeImage(frameImage);
+        // 摄像头场景要控制单帧耗时，只追加一个轻量预处理变体，避免 UI 卡顿。
+        const DecodeResult result = decoderService_.decodeImage(frameImage, DecodeOptions{true, 1});
         cameraSymbols_ = result.symbols;
 
         if (result.success) {
