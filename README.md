@@ -40,6 +40,56 @@
 - 摄像头识别：使用 Qt6 Multimedia 读取摄像头视频流，定时分析画面并显示识别结果。
 - 结果处理：支持复制识别内容；当内容是 HTTP/HTTPS URL 时，可用浏览器打开。
 
+## 项目依赖
+
+### 必需依赖
+
+| 依赖 | 用途 | CMake 查找方式 |
+| --- | --- | --- |
+| CMake 3.16+ | 配置和生成构建系统 | `cmake_minimum_required(VERSION 3.16)` |
+| 支持 C++17 的编译器 | 编译 Qt/C++ 业务代码 | `set(CMAKE_CXX_STANDARD 17)` |
+| Qt Widgets | 桌面图形界面、文件选择、图片预览和交互控件 | 优先 `find_package(Qt6 COMPONENTS Widgets)`，未找到 Qt6 时回退到 `find_package(Qt5 COMPONENTS Widgets)` |
+| ZXing-C++ | 二维码/条形码生成与识别核心能力 | `find_package(ZXing REQUIRED)`，需要提供 `ZXing::ZXing` CMake target |
+
+### 可选依赖
+
+| 依赖 | 启用条件 | 功能影响 |
+| --- | --- | --- |
+| Qt6 Multimedia | 使用 Qt6 且能找到 `Qt6::Multimedia` | 启用摄像头实时识别；未找到时应用仍可编译，但摄像头识别不可用 |
+| OpenCV | 能找到 `core`、`imgproc`、`imgcodecs`、`objdetect`、`videoio` 组件 | 当前作为预留适配依赖；未安装不会影响现有生成、文件识别和 Qt 图像预处理能力 |
+
+### 常见安装提示
+
+Ubuntu/Debian 环境可参考：
+
+```bash
+sudo apt install build-essential cmake qt6-base-dev qt6-multimedia-dev libzxing-dev
+```
+
+如果使用 Qt5 构建，可安装：
+
+```bash
+sudo apt install qtbase5-dev
+```
+
+如需安装可选 OpenCV：
+
+```bash
+sudo apt install libopencv-dev
+```
+
+macOS Homebrew 环境可参考：
+
+```bash
+brew install cmake qt zxing-cpp
+```
+
+如果依赖安装在非系统默认路径，需要在配置时通过 `CMAKE_PREFIX_PATH` 指定 Qt、ZXing 等包的 CMake 配置目录，例如：
+
+```bash
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/qt;/path/to/zxing"
+```
+
 ## 构建方式
 
 ```bash
@@ -47,7 +97,7 @@ cmake -S . -B build
 cmake --build build
 ```
 
-说明：Qt Widgets 与 ZXing 是当前必需依赖；Qt6 Multimedia 可用时会启用摄像头识别；OpenCV 仍作为可选依赖预留，当前预处理增强使用项目内 Qt 图像算法实现。
+配置阶段会检查 Qt Widgets 与 ZXing。若缺少必需依赖，`cmake -S . -B build` 会直接失败；若仅缺少可选依赖，CMake 会跳过对应能力并继续生成构建文件。
 
 ## 后续计划
 
