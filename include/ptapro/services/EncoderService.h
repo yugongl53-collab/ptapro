@@ -7,10 +7,12 @@ namespace ptapro {
 class EncoderService {
 public:
     EncodeResult encode(const EncodeRequest& request) const;
+    QString renderSvg(const EncodeRequest& request, QString* errorMessage = nullptr) const;
 
 private:
-    QImage renderQrPlaceholder(const EncodeRequest& request) const;
-    QImage renderBarcodePlaceholder(const EncodeRequest& request) const;
+    EncodeResult renderQrCode(const EncodeRequest& request) const;
+    EncodeResult renderCode128(const EncodeRequest& request) const;
+    EncodeResult renderEan13(const EncodeRequest& request) const;
 };
 
 } // namespace ptapro

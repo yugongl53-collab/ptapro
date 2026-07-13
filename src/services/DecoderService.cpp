@@ -1,6 +1,23 @@
 #include "ptapro/services/DecoderService.h"
 
+#include <ZXing/BarcodeFormat.h>
+#include <ZXing/ImageView.h>
+#include <ZXing/ReadBarcode.h>
+#include <ZXing/ReaderOptions.h>
+#include <ZXing/Result.h>
+
+#include <cstdint>
+#include <string>
+
 namespace ptapro {
+namespace {
+
+QString fromUtf8StdString(const std::string& text)
+{
+    return QString::fromUtf8(text.data(), static_cast<int>(text.size()));
+}
+
+} // namespace
 
 DecodeResult DecoderService::decodeImage(const QImage& image) const
 {
@@ -13,23 +30,38 @@ DecodeResult DecoderService::decodeImage(const QImage& image) const
         };
     }
 
-#if defined(PTAPRO_HAS_OPENCV)
-    // 这里是 OpenCV/ZXing/ZBar 等识别适配层的预留入口。
-    // 初始架构阶段先保持明确失败，防止用户误以为占位逻辑已经具备真实识别能力。
+    // ZXing 使用非拥有型 ImageView，必须保证转换后的 QImage 在识别调用期间保持存活。
+    const QImage rgbImage = image.convertToFormat(QImage::Format_RGB888);
+    const ZXing::ImageView imageView(
+        reinterpret_cast<const uint8_t*>(rgbImage.constBits()),
+        rgbImage.width(),
+        rgbImage.height(),
+        ZXing::ImageFormat::RGB,
+        rgbImage.bytesPerLine()
+    );
+
+    ZXing::ReaderOptions options;
+    options.setFormats(ZXing::BarcodeFormat::QRCode | ZXing::BarcodeFormat::Code128 | ZXing::BarcodeFormat::EAN13);
+    options.setTryHarder(true);
+    options.setTryRotate(true);
+    options.setTryInvert(true);
+
+    const ZXing::Result result = ZXing::ReadBarcode(imageView, options);
+    if (!result.isValid()) {
+        return {
+            false,
+            {},
+            {},
+            QStringLiteral("未识别到二维码或条形码。"),
+        };
+    }
+
     return {
-        false,
-        {},
-        {},
-        QStringLiteral("已检测到 OpenCV，但真实识别适配层尚未实现。"),
+        true,
+        fromUtf8StdString(result.text()),
+        fromUtf8StdString(ZXing::ToString(result.format())),
+        QStringLiteral("识别成功。"),
     };
-#else
-    return {
-        false,
-        {},
-        {},
-        QStringLiteral("当前环境未启用真实识别适配层，请后续接入 OpenCV 或条码识别库。"),
-    };
-#endif
 }
 
 } // namespace ptapro

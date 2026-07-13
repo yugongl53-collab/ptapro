@@ -41,4 +41,48 @@ Symbology symbologyFromIndex(int index)
     }
 }
 
+QString displayName(ErrorCorrectionLevel level)
+{
+    switch (level) {
+    case ErrorCorrectionLevel::Low:
+        return QStringLiteral("L - 低");
+    case ErrorCorrectionLevel::Medium:
+        return QStringLiteral("M - 中");
+    case ErrorCorrectionLevel::Quartile:
+        return QStringLiteral("Q - 较高");
+    case ErrorCorrectionLevel::High:
+        return QStringLiteral("H - 高");
+    }
+
+    // 防御性兜底：枚举未来扩展时，界面不会因为遗漏映射而显示空文本。
+    return QStringLiteral("未知纠错级别");
+}
+
+QStringList supportedErrorCorrectionNames()
+{
+    return {
+        displayName(ErrorCorrectionLevel::Low),
+        displayName(ErrorCorrectionLevel::Medium),
+        displayName(ErrorCorrectionLevel::Quartile),
+        displayName(ErrorCorrectionLevel::High),
+    };
+}
+
+ErrorCorrectionLevel errorCorrectionFromIndex(int index)
+{
+    switch (index) {
+    case 0:
+        return ErrorCorrectionLevel::Low;
+    case 1:
+        return ErrorCorrectionLevel::Medium;
+    case 2:
+        return ErrorCorrectionLevel::Quartile;
+    case 3:
+        return ErrorCorrectionLevel::High;
+    default:
+        // 非法索引按中等级别处理，兼顾容量和容错能力。
+        return ErrorCorrectionLevel::Medium;
+    }
+}
+
 } // namespace ptapro

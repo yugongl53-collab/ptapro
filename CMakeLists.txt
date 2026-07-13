@@ -22,6 +22,9 @@ else()
     set(PTAPRO_QT_PACKAGE Qt5)
 endif()
 
+# ZXing 负责二维码和一维条码的真实生成/识别能力，属于当前功能的关键依赖。
+find_package(ZXing REQUIRED)
+
 # OpenCV 先作为可选依赖接入，避免在初始架构阶段阻断没有 OpenCV 的环境。
 # 后续实现真实识别能力时，可以在 services 层内逐步打开对应适配代码。
 find_package(OpenCV QUIET COMPONENTS core imgproc imgcodecs objdetect videoio)
@@ -46,6 +49,7 @@ target_include_directories(ptapro
 target_link_libraries(ptapro
     PRIVATE
         ${PTAPRO_QT_PACKAGE}::Widgets
+        ZXing::ZXing
 )
 
 if(OpenCV_FOUND)

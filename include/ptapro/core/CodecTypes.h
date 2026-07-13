@@ -14,10 +14,21 @@ enum class Symbology {
     Ean13
 };
 
+enum class ErrorCorrectionLevel {
+    Low,
+    Medium,
+    Quartile,
+    High
+};
+
 struct EncodeRequest {
     QString payload;
     Symbology symbology{Symbology::QrCode};
     QSize imageSize{320, 320};
+    int marginSize{4};
+    ErrorCorrectionLevel errorCorrection{ErrorCorrectionLevel::Medium};
+    bool showReadableText{true};
+    QImage logo;
 };
 
 struct EncodeResult {
@@ -36,5 +47,8 @@ struct DecodeResult {
 QString displayName(Symbology symbology);
 QStringList supportedSymbologyNames();
 Symbology symbologyFromIndex(int index);
+QString displayName(ErrorCorrectionLevel level);
+QStringList supportedErrorCorrectionNames();
+ErrorCorrectionLevel errorCorrectionFromIndex(int index);
 
 } // namespace ptapro
