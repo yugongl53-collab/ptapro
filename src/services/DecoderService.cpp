@@ -35,7 +35,13 @@ DecodedSymbol toDecodedSymbol(const ZXing::Result& result)
 ZXing::ReaderOptions defaultReaderOptions()
 {
     ZXing::ReaderOptions options;
-    options.setFormats(ZXing::BarcodeFormat::QRCode | ZXing::BarcodeFormat::Code128 | ZXing::BarcodeFormat::EAN13);
+    options.setFormats(
+        ZXing::BarcodeFormat::QRCode |
+        ZXing::BarcodeFormat::Code128 |
+        ZXing::BarcodeFormat::EAN13 |
+        ZXing::BarcodeFormat::UPCA |
+        ZXing::BarcodeFormat::Code39
+    );
     options.setTryHarder(true);
     options.setTryRotate(true);
     options.setTryInvert(true);

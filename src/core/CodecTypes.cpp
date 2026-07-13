@@ -11,6 +11,10 @@ QString displayName(Symbology symbology)
         return QStringLiteral("条形码 Code 128");
     case Symbology::Ean13:
         return QStringLiteral("条形码 EAN-13");
+    case Symbology::UpcA:
+        return QStringLiteral("条形码 UPC-A");
+    case Symbology::Code39:
+        return QStringLiteral("条形码 Code 39");
     }
 
     // 防御性兜底：当枚举未来扩展但 switch 尚未补齐时，界面仍能给出可读名称。
@@ -23,6 +27,8 @@ QStringList supportedSymbologyNames()
         displayName(Symbology::QrCode),
         displayName(Symbology::Code128),
         displayName(Symbology::Ean13),
+        displayName(Symbology::UpcA),
+        displayName(Symbology::Code39),
     };
 }
 
@@ -35,6 +41,10 @@ Symbology symbologyFromIndex(int index)
         return Symbology::Code128;
     case 2:
         return Symbology::Ean13;
+    case 3:
+        return Symbology::UpcA;
+    case 4:
+        return Symbology::Code39;
     default:
         // 非法索引按二维码处理，避免 UI 状态异常时向下游传递不可控值。
         return Symbology::QrCode;

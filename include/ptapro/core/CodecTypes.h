@@ -13,7 +13,9 @@ namespace ptapro {
 enum class Symbology {
     QrCode,
     Code128,
-    Ean13
+    Ean13,
+    UpcA,
+    Code39
 };
 
 enum class ErrorCorrectionLevel {

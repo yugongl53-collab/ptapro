@@ -6,6 +6,7 @@
 #include <ZXing/MultiFormatWriter.h>
 
 #include <QBuffer>
+#include <QChar>
 #include <QIODevice>
 #include <QPainter>
 #include <QXmlStreamWriter>
@@ -51,6 +52,10 @@ ZXing::BarcodeFormat toZxingFormat(Symbology symbology)
         return ZXing::BarcodeFormat::Code128;
     case Symbology::Ean13:
         return ZXing::BarcodeFormat::EAN13;
+    case Symbology::UpcA:
+        return ZXing::BarcodeFormat::UPCA;
+    case Symbology::Code39:
+        return ZXing::BarcodeFormat::Code39;
     }
 
     // 防御性兜底：未来新增码制但未适配时，先按 QR Code 生成，避免未定义行为。
@@ -85,17 +90,14 @@ int ean13CheckDigit(const QString& firstTwelveDigits)
     return (10 - (sum % 10)) % 10;
 }
 
-QString normalizedPayload(const EncodeRequest& request)
+int upcACheckDigit(const QString& firstElevenDigits)
 {
-    const QString payload = request.payload.trimmed();
-    if (payload.isEmpty()) {
-        throw std::runtime_error("请输入需要编码的文本或 URL。");
-    }
+    // UPC-A 的 11 位数据位可等价为前置 0 的 EAN-13 数据位后再计算校验位。
+    return ean13CheckDigit(QStringLiteral("0") + firstElevenDigits);
+}
 
-    if (request.symbology != Symbology::Ean13) {
-        return payload;
-    }
-
+QString digitsOnlyPayload(const QString& payload, const QString& symbologyName)
+{
     QString digits;
     digits.reserve(payload.size());
     for (const QChar ch : payload) {
@@ -103,14 +105,20 @@ QString normalizedPayload(const EncodeRequest& request)
             continue;
         }
         if (!ch.isDigit()) {
-            throw std::runtime_error("EAN-13 只能包含 12 或 13 位数字。");
+            const QByteArray message = QStringLiteral("%1 只能包含数字。").arg(symbologyName).toUtf8();
+            throw std::runtime_error(std::string(message.constData(), static_cast<size_t>(message.size())));
         }
         digits.append(ch);
     }
+    return digits;
+}
+
+QString normalizedEan13Payload(const QString& payload)
+{
+    const QString digits = digitsOnlyPayload(payload, QStringLiteral("EAN-13"));
 
     if (digits.size() == 12) {
-        digits.append(QString::number(ean13CheckDigit(digits)));
-        return digits;
+        return digits + QString::number(ean13CheckDigit(digits));
     }
 
     if (digits.size() != 13) {
@@ -123,6 +131,66 @@ QString normalizedPayload(const EncodeRequest& request)
     }
 
     return digits;
+}
+
+QString normalizedUpcAPayload(const QString& payload)
+{
+    const QString digits = digitsOnlyPayload(payload, QStringLiteral("UPC-A"));
+
+    if (digits.size() == 11) {
+        return digits + QString::number(upcACheckDigit(digits));
+    }
+
+    if (digits.size() != 12) {
+        throw std::runtime_error("UPC-A 需要 11 位数据数字，或 12 位含校验位数字。");
+    }
+
+    const QString firstElevenDigits = digits.left(11);
+    if (digits.at(11).digitValue() != upcACheckDigit(firstElevenDigits)) {
+        throw std::runtime_error("UPC-A 校验位不正确，请检查最后一位数字。");
+    }
+
+    return digits;
+}
+
+QString normalizedCode39Payload(const QString& payload)
+{
+    QString content = payload.toUpper();
+    if (content.startsWith(QLatin1Char('*')) && content.endsWith(QLatin1Char('*')) && content.size() > 1) {
+        // Code 39 的起止符由 ZXing 生成，用户如果输入星号包裹内容，这里主动剥离。
+        content = content.mid(1, content.size() - 2);
+    }
+    if (content.trimmed().isEmpty()) {
+        throw std::runtime_error("Code 39 内容不能为空。");
+    }
+
+    static const QString kAllowedCharacters = QStringLiteral("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ -. $/+%");
+    for (const QChar ch : content) {
+        if (!kAllowedCharacters.contains(ch)) {
+            throw std::runtime_error("Code 39 只支持数字、大写字母、空格以及 - . $ / + % 字符。");
+        }
+    }
+
+    return content;
+}
+
+QString normalizedPayload(const EncodeRequest& request)
+{
+    const QString payload = request.payload.trimmed();
+    if (payload.isEmpty()) {
+        throw std::runtime_error("请输入需要编码的文本或 URL。");
+    }
+
+    if (request.symbology == Symbology::Ean13) {
+        return normalizedEan13Payload(payload);
+    }
+    if (request.symbology == Symbology::UpcA) {
+        return normalizedUpcAPayload(payload);
+    }
+    if (request.symbology == Symbology::Code39) {
+        return normalizedCode39Payload(payload);
+    }
+    return payload;
 }
 
 MatrixPayload buildMatrix(const EncodeRequest& request, QSize targetSize)
@@ -349,6 +417,10 @@ EncodeResult EncoderService::encode(const EncodeRequest& request) const
             return renderCode128(request);
         case Symbology::Ean13:
             return renderEan13(request);
+        case Symbology::UpcA:
+            return renderUpcA(request);
+        case Symbology::Code39:
+            return renderCode39(request);
         }
     } catch (const std::exception& error) {
         return {
@@ -392,6 +464,16 @@ EncodeResult EncoderService::renderCode128(const EncodeRequest& request) const
 }
 
 EncodeResult EncoderService::renderEan13(const EncodeRequest& request) const
+{
+    return makeResult(request);
+}
+
+EncodeResult EncoderService::renderUpcA(const EncodeRequest& request) const
+{
+    return makeResult(request);
+}
+
+EncodeResult EncoderService::renderCode39(const EncodeRequest& request) const
 {
     return makeResult(request);
 }

@@ -13,6 +13,8 @@ private:
     EncodeResult renderQrCode(const EncodeRequest& request) const;
     EncodeResult renderCode128(const EncodeRequest& request) const;
     EncodeResult renderEan13(const EncodeRequest& request) const;
+    EncodeResult renderUpcA(const EncodeRequest& request) const;
+    EncodeResult renderCode39(const EncodeRequest& request) const;
 };
 
 } // namespace ptapro
