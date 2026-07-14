@@ -541,9 +541,11 @@ void MainWindow::processCameraFrame(const QVideoFrame& frame)
 
         if (result.success) {
             updateDecodedResults(result);
-            // 识别成功后只关闭摄像头识别状态，保留下方结果记录供复制或打开 URL。
-            stopCameraRecognition(false);
-            showMessage(QStringLiteral("%1 已关闭摄像头。").arg(result.message), true);
+            // 复用“停止摄像头识别”按钮路径，保证自动停止和用户手动停止执行同一套逻辑。
+            if (cameraButton_) {
+                cameraButton_->click();
+            }
+            showMessage(result.message, true);
             return;
         } else {
             clearDecodedResults(QStringLiteral("摄像头识别中，未检测到码。"));
