@@ -58,7 +58,7 @@ private:
     void clearDecodedResults(const QString& message);
     QImage renderDecodeOverlay(const QImage& image, const QVector<DecodedSymbol>& symbols) const;
     const DecodedSymbol* selectedDecodedSymbol() const;
-    void stopCameraRecognition();
+    void stopCameraRecognition(bool clearResults = true);
     void showMessage(const QString& message, bool success);
 
     EncoderService encoderService_;
