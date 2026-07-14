@@ -540,12 +540,8 @@ void MainWindow::processCameraFrame(const QVideoFrame& frame)
         cameraSymbols_ = result.symbols;
 
         if (result.success) {
-            // 成功识别后先把当前帧和结果固定到界面，再退出摄像头模式，避免停止流程清空结果记录。
             updateDecodedResults(result);
-            updatePreview(renderDecodeOverlay(frameImage, cameraSymbols_));
-            stopCameraRecognition(true);
-            showMessage(QStringLiteral("%1 已自动停止摄像头识别。").arg(result.message), true);
-            return;
+            showMessage(result.message, true);
         } else {
             clearDecodedResults(QStringLiteral("摄像头识别中，未检测到码。"));
         }
@@ -690,7 +686,7 @@ const DecodedSymbol* MainWindow::selectedDecodedSymbol() const
     return &decodedSymbols_.at(index);
 }
 
-void MainWindow::stopCameraRecognition(bool keepDecodedResults)
+void MainWindow::stopCameraRecognition()
 {
     if (!cameraActive_) {
         return;
@@ -698,12 +694,10 @@ void MainWindow::stopCameraRecognition(bool keepDecodedResults)
 
     cameraActive_ = false;
     cameraSymbols_.clear();
+    currentImage_ = {};
     generatedPreviewVisible_ = false;
-    if (!keepDecodedResults) {
-        currentImage_ = {};
-        clearDecodedResults({});
-        updatePreview(currentImage_);
-    }
+    clearDecodedResults({});
+    updatePreview(currentImage_);
     if (cameraButton_) {
         cameraButton_->setText(QStringLiteral("启动摄像头识别"));
     }
