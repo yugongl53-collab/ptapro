@@ -24,6 +24,7 @@
 #include <QPixmap>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -541,11 +542,16 @@ void MainWindow::processCameraFrame(const QVideoFrame& frame)
 
         if (result.success) {
             updateDecodedResults(result);
-            // 复用“停止摄像头识别”按钮路径，保证自动停止和用户手动停止执行同一套逻辑。
-            if (cameraButton_) {
+            const QString successMessage = result.message;
+            // 复用“停止摄像头识别”按钮路径，但必须等当前视频帧回调结束后再触发，
+            // 避免在 QVideoSink 发信号期间同步释放摄像头资源导致窗口被关闭。
+            QTimer::singleShot(0, this, [this, successMessage]() {
+                if (!cameraActive_ || !cameraButton_) {
+                    return;
+                }
                 cameraButton_->click();
-            }
-            showMessage(result.message, true);
+                showMessage(successMessage, true);
+            });
             return;
         } else {
             clearDecodedResults(QStringLiteral("摄像头识别中，未检测到码。"));
